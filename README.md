@@ -12,7 +12,7 @@ The list of files to copy into the chroot can also be extended easliy for your c
 #### Any bugs, bad style or other ideas of improvement are welcome.
 I'm not a professional programmer, but willing to improve
 
-####Usage:
+#### Usage:
 #### easy-chroot.sh
 -s (as in setup):			Set up a chrooted environment  
 -c (as in clean):			Clean a chrooted environment  
