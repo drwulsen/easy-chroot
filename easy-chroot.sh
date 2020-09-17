@@ -2,184 +2,220 @@
 
 #initialize variables
 action=""
-chrootdir=""
+chrootdir="Directory not specified"
 
-#proc mountpoint(s)
-proc_mounts=(
-	/proc
-)
+##messages
+#errors
+e_empty=""
+e_mount_1="Source mount directory does not exist:"
+e_mount_2="Target mountpoint does not exist:"
+e_mount_3="--make-r* requested, for it, but nothing is mounted under:"
+e_mount_4="There is already something mounted under:"
+e_perm_1="This script must be run as root"
+e_arg_1="No arguments given, exiting."
+e_arg_2="Conflicting arguments given (clean and setup at the same time), exiting."
+e_arg_3="Unknown argument given:"
+e_dir_1="Directory to chroot into not set or does not exist:"
+e_sub_1="Subroutine error:"
+e_user_1="User abort"
+e_file_1="File to copy does not exist:"
+e_file_2="Error copying file:"
+#status
+m_action_setup_1="Setting up chroot..."
+m_action_clean_1="Cleaning chrooted environment (umount)..."
+#help
+m_usage_1="Usage: $0 [-s | -c | -h] -d /foo/chroot\n-s: Setup chrooted environment\n-c: Clean (un-chroot) environment\n-d: Directory to chroot into.\n-h: Show this help message."
 
-#bind mountpoints
-bind_mounts=(
-	/dev
-	/dev/pts
-	/sys
-	/var/db/repos/gentoo
-	/var/cache/binpkgs
-	/var/cache/distfiles
-	/usr/src/linux
-	/lib/modules
-	/var/tmp/portage
-	/tmp
-)
+#mountpoints in order of mounting, comma-separated mount option. One option per line
+#--bind and --make-rslave for example have to be two consecutive lines
+#Use double quotes for safety
+#gentoo documentation says, that /usr/src/linux and /lib/modules should be included
+#i don't do that, as i use it for an install and need a clean kernel directory for my fresh system
+mountpoints=(
+	"/proc,types=proc"
+	"/dev,rbind"
+	"/dev,make-rslave"
+	"/sys,rbind"
+	"/sys,make-rslave"
+	"/var/db/repos/gentoo,rbind"
+	"/var/cache/binpkgs,rbind"
+	"/var/cache/distfiles,rbind"
+	"/tmp,rbind"
+	"/var/tmp,rbind"
+	"/var/tmp/portage,type=tmpfs"
+	)
 
-#create reverse array of mountpoints for unmounting later on
-	min=0
-	max=$(( ${#bind_mounts[@]} -1 ))
 
-	while [[ min -lt max ]]
-	do
-		# Swap current first and last elements
-		x="${bind_mounts[$min]}"
-		bind_mounts_r[$min]="${bind_mounts[$max]}"
-		bind_mounts_r[$max]="$x"
-
-		# Move closer
-		(( min++, max-- ))
-	done
-
-#files to copy
+#files to copy, will be copied to the chroot-prefixed path
 file_copy=(
 	/etc/resolv.conf
 )
 
-
-#messages
-e1="This script must be run as root"
-e2="No arguments given, exiting."
-e3="Directory to chroot into not set, exiting."
-e4="Directory to chroot into does not exist, exiting."
-e5="Conflicting options given - cannot setup and cleanup at the same time."
-e6="Error mounting"
-e7="Directory does not exist: "
-e8=" error unmounting, continuing."
-e9=" User abort."
-e10="Error copying"
-h1="-s: Setup chrooted environment\n-c: Clean (un-chroot) environment\n-d: Directory to chroot into.\n-h: Show help message."
-m1="Setting up chroot..."
-m2="Cleaning chrooted environment (umount)"
-m3=" successfully mounted."
-m4=" successfully unmounted."
-m5=" successfully copied."
-m6="Usage: $0 [-s | -c] [-d /foo/chroot] [-h]"
-
-#general usage and help information
+#write a message, ${!1} allows us to pass variable names
+#for example, "e_arg_1" will print the value of variable "e_arg_1"
 message() {
-	echo -e "${!1}"
+	echo -e "${!1} ${2} ${3}"
 }
 
+#throw an error message and exit
 error() {
-	echo "${!1}" "${2}"
+	echo -ne "\nERROR: "
+	message "$1" "$2"
 	exit 1
 }
 
+#check for and in case of errors, exit
+#"$1" is the return code handed over from the caller, "$2" an additional message to print.
 checkfail() {
-	if [ $1 -ne 0 ]; then
-		echo -ne "${chrootdir}${2}:"
-		error "${3}"
-	else
-		echo -ne "${chrootdir}${2}:"
-		message "${4}"
+	if [[ "$1" -ne 0 ]]; then
+		error "e_sub_1" "$2"
 	fi
 }
 
+#check directories and if desired, ask to create them
+#invocation: checkdir "directory" "message" "ask to create (has to be "y")"
 checkdir() {
-	if [ ! -d "$1" ]; then
-		error e7 "$1"
-		exit 1
+	yesno=""
+	message="$2"
+	if [[ ! -d "$1" ]] && [[ "$3" == "y" ]]; then
+		message "$message" "$1"
+		read  -n1 -s -p "Create ${1}? [y/n]" yesno
+		if [[ "${yesno,,}" != "y" ]] ; then
+			error "$message" "$1"
+			exit 1
+		else
+			mkdir -p "$1"
+			checkfail "$?" "mkdir -p $1"
+		fi
 	fi
 }
 
+#mount specified directories and devices into the chroot-prefixed path
+#checks the specified source and target do exist, source missing = error, target missing = ask to create
+#checks nothing is already mounted under the target for normal and bind mounts.
+#checks if --make-r* is requested, something IS mounted under the target
+chrootmount() {
+	for i in "${mountpoints[@]}"; do
+		mountsrc_=$(echo "$i" | cut -d ',' -f 1)
+		mountsrc="${mountsrc_%/}"
+		mountpoint="${chrootdir}${mountsrc}"
+		mountopts=$(echo "$i" | cut -d ',' -f 2)
+#check for --make-r* mounts
+		if [[ ! "$mountopts" =~ make-r.* ]]; then
+			checkdir "$mountsrc" "e_mount_1" "n"
+			checkdir "$mountpoint" "e_mount_2" "y"
+#check for directory to not be taken by another mount already
+			grep -q "$mountpoint" "/proc/mounts"
+			if [[ "$?" != 0 ]]; then
+				mount "--${mountopts}" "$mountsrc" "$mountpoint"
+				checkfail "$?" "mount --${mountopts} $mountsrc $mountpoint"
+			else
+				error "e_mount_4" "$mountpoint"
+			fi
+		else
+#check for something to be mounted in case of a --make-r* mount
+			grep -q "$mountpoint" "/proc/mounts"
+			if [[ "$?" != 0 ]]; then
+				error "e_mount_3" "$mountpoint"
+			else
+				mount "--${mountopts}" "$mountpoint"
+				checkfail "$?" "mount --${mountopts} $mountpoint"
+			fi
+		fi
+	done
+}
+
+#copies all specified files to the chroot-prefixed path
+#if a source file does not exist, throw an error and exit.
+chrootcopy() {
+	for filesrc in "${file_copy[@]}"; do
+		filedest="${chrootdir}${filesrc}"
+	if [[ ! -e ${filesrc%/} ]]; then
+		error e_file_1 "$filesrc"
+	fi
+	cp -d "$filesrc" "$filedest"
+	checkfail "$?" "cp -d ${filesrc} ${filedest}"
+	done
+
+	}
+
+#call all functions necessary to chroot
 setup() {
-	yesno=""
-	
-	for i in ${proc_mounts[@]}; do
-		checkdir "${chrootdir}${i}"
-		mount -t proc "none" "${chrootdir}${i}"
-		checkfail_mount "$?" "$i" "e6" "m3"
-	done
-
-	for i in ${bind_mounts[@]}; do
-		checkdir "${chrootdir}${i}"
-		mount -o bind "${i}" "${chrootdir}${i}"
-		checkfail_mount "$?" "$i" "e6" "m3"
-	done
-	
-	for i in ${file_copy[@]}; do
-		checkdir "${chrootdir}$(dirname ${i})"
-		echo cp -d "${i}" "${chrootdir}${i}"
-		checkfail "$?" "$i" "e10" "m5"
-	done
-
+	yesno="n"
+	chrootmount
+	chrootcopy
+#time to chroot
 	read  -n1 -s -p "Chroot into ${chrootdir}? [y/n]" yesno
-	if [ "${yesno,,}" != "y" ] ; then
-		error e9
+	if [[ "${yesno,,}" != "y" ]] ; then
+		error e_user_1
 	else
 		chroot "$chrootdir" /bin/bash
 	fi
-	exit 0
 }
 
+#cleanup the chroot mounts
+#--make-rprivate is a workaround for "device or resource busy" on --make-rslave mounts
+#since this only happens after exiting the chroot, it will be fine for systemd setups as well
 clean() {
-	for i in ${bind_mounts_r[@]}; do
-		umount "${chrootdir}${i}"
-#		checkfail "$?" "$i" "e8" "m4"
-	done
-
-	for i in ${proc_mounts[@]}; do
-		umount "${chrootdir}${i}"
-#		checkfail "$?" "$i" "e8" "m4"
-	done
-	exit 0
+for i in $(grep "$chrootdir" "/proc/mounts" | cut -d ' ' -f 2 | sort -r); do
+	mount --make-rprivate "$i"
+	umount -r -n "$i"
+done
 }
 
 #check if we are root
-if [ $EUID -ne 0 ]; then
-	error e1
+if [[ $EUID -ne 0 ]]; then
+	error "e_perm_1"
 fi
 
 #check if any options were given
-if [ -z "$1" ]; then
-	error e2
+if [[ -z "$1" ]]; then
+	error "e_arg_1"
 fi
 
 #check options
-while getopts "cd:sh" o; do
+#	{%/} removes trailing slash
+while getopts ":cd:sh" o; do
 	case "${o}" in
-		d)	#	%/ removes trailing slash
+		c)
+			action="clean"
+			;;
+		d)
 			chrootdir=${OPTARG%/}
-			if [ ! -d "$chrootdir" ]; then
-				error e4
-			fi
 			;;
 		s)
-			action="setup"
-			;;
-		c)
-			if [ -z "$action" ]; then
-				action="clean"
+			if [[ -z "$action" ]]; then
+				action="setup"
 			else
-				error e5
+				error "e_arg_2"
 			fi
 			;;
 		h)
-			message h1
+			message "m_usage_1"
+			;;
+		:)
+			error "e_empty" "option -$OPTARG requires an argument"
 			;;
 		*)
-			message m6
+			message "m_usage_1"
+			error "e_arg_3" "option \"-$OPTARG\" does not exist."
 			exit 1
 			;;
 	esac
 done
+shift "$((OPTIND-1))"
+
+#check if chrootdir does exist.
+checkdir "$chrootdir" "e_dir_1"
 
 #start appropriate routine
 case "$action" in
 	setup)
-		message m1
+		message "m_action_setup_1"
 		setup
 		;;
 	clean)
-		message m2
+		message "m_action_clean_1"
 		clean
 		;;
 esac
