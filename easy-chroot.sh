@@ -80,6 +80,7 @@ checkdir() {
 	if [[ ! -d "$1" ]] && [[ "$3" == "y" ]]; then
 		message "$message" "$1"
 		read  -n1 -s -p "Create ${1}? [y/n]" yesno
+		echo ''
 		if [[ "${yesno,,}" != "y" ]] ; then
 			error "$message" "$1"
 			exit 1
@@ -146,6 +147,7 @@ setup() {
 	chrootcopy
 #time to chroot
 	read  -n1 -s -p "Chroot into ${chrootdir}? [y/n]" yesno
+	echo ''
 	if [[ "${yesno,,}" != "y" ]] ; then
 		error e_user_1
 	else
