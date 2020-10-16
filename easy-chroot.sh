@@ -25,6 +25,51 @@ m_action_setup_1="Setting up chroot..."
 m_action_clean_1="Cleaning chrooted environment (umount)..."
 #help
 m_usage_1="Usage: $0 [-s | -c | -h] -d /foo/chroot\n-s: Setup chrooted environment\n-c: Clean (un-chroot) environment\n-d: Directory to chroot into.\n-h: Show this help message."
+#custom
+i_cust_1="Custom command called: "
+i_cust_2="Custom command failed: "
+
+#check if we are root
+if [[ $EUID -ne 0 ]]; then
+	error "e_perm_1"
+fi
+
+#check if any options were given
+if [[ -z "$1" ]]; then
+	error "e_arg_1"
+fi
+
+#check options
+#	{%/} removes trailing slash
+while getopts ":cd:sh" o; do
+	case "${o}" in
+		c)
+			action="clean"
+			;;
+		d)
+			chrootdir=${OPTARG%/}
+			;;
+		s)
+			if [[ -z "$action" ]]; then
+				action="setup"
+			else
+				error "e_arg_2"
+			fi
+			;;
+		h)
+			message "m_usage_1"
+			;;
+		:)
+			error "e_empty" "option -$OPTARG requires an argument"
+			;;
+		*)
+			message "m_usage_1"
+			error "e_arg_3" "option \"-$OPTARG\" does not exist."
+			exit 1
+			;;
+	esac
+done
+shift "$((OPTIND-1))"
 
 #mountpoints in order of mounting, comma-separated mount option. One option per line
 #--bind and --make-rslave for example have to be two consecutive lines
@@ -48,8 +93,14 @@ mountpoints=(
 
 #files to copy, will be copied to the chroot-prefixed path
 file_copy=(
-	/etc/resolv.conf
+	"/etc/resolv.conf"
 )
+
+#arbitrary custom commands to run before chrooting
+#there is no safety net!
+custcommands=(
+	"mount -t f2fs -o loop /home/foo/img_gentoo_ccache.raw ${chrootdir}/var/cache/ccache"
+	)
 
 #write a message, ${!1} allows us to pass variable names
 #for example, "e_arg_1" will print the value of variable "e_arg_1"
@@ -140,11 +191,26 @@ chrootcopy() {
 
 	}
 
+#runs all custom commands after confirmation
+runcustcommands() {
+	for command in "${custcommands[@]}"; do
+		read  -n1 -s -p "${i_cust_1} ${command} - run it? [y/n]" yesno
+		echo ''
+		if [[ "${yesno,,}" != "y" ]] ; then
+			message i_cust_2
+		else
+			${command}
+			checkfail "$?" "$command"
+		fi
+	done
+}
+
 #call all functions necessary to chroot
 setup() {
 	yesno="n"
-	chrootmount
-	chrootcopy
+#	chrootmount
+#	chrootcopy
+	runcustcommands
 #time to chroot
 	read  -n1 -s -p "Chroot into ${chrootdir}? [y/n]" yesno
 	echo ''
@@ -164,48 +230,6 @@ for i in $(grep "$chrootdir" "/proc/mounts" | cut -d ' ' -f 2 | sort -r); do
 	umount -r -n "$i"
 done
 }
-
-#check if we are root
-if [[ $EUID -ne 0 ]]; then
-	error "e_perm_1"
-fi
-
-#check if any options were given
-if [[ -z "$1" ]]; then
-	error "e_arg_1"
-fi
-
-#check options
-#	{%/} removes trailing slash
-while getopts ":cd:sh" o; do
-	case "${o}" in
-		c)
-			action="clean"
-			;;
-		d)
-			chrootdir=${OPTARG%/}
-			;;
-		s)
-			if [[ -z "$action" ]]; then
-				action="setup"
-			else
-				error "e_arg_2"
-			fi
-			;;
-		h)
-			message "m_usage_1"
-			;;
-		:)
-			error "e_empty" "option -$OPTARG requires an argument"
-			;;
-		*)
-			message "m_usage_1"
-			error "e_arg_3" "option \"-$OPTARG\" does not exist."
-			exit 1
-			;;
-	esac
-done
-shift "$((OPTIND-1))"
 
 #check if chrootdir does exist.
 checkdir "$chrootdir" "e_dir_1"
