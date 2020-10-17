@@ -99,7 +99,8 @@ file_copy=(
 #arbitrary custom commands to run before chrooting
 #there is no safety net!
 custcommands=(
-	"mount -t f2fs -o loop /home/foo/img_gentoo_ccache.raw ${chrootdir}/var/cache/ccache"
+	"mkdir -p ${chrootdir}/var/cache/ccache"
+	"mount -t f2fs -o loop /home/foo/img_gentoo_ccache.raw	${chrootdir}/var/cache/ccache"
 	)
 
 #write a message, ${!1} allows us to pass variable names
@@ -208,8 +209,8 @@ runcustcommands() {
 #call all functions necessary to chroot
 setup() {
 	yesno="n"
-#	chrootmount
-#	chrootcopy
+	chrootmount
+	chrootcopy
 	runcustcommands
 #time to chroot
 	read  -n1 -s -p "Chroot into ${chrootdir}? [y/n]" yesno
