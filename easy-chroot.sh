@@ -83,11 +83,11 @@ mountpoints=(
 	"/sys,rbind"
 	"/sys,make-rslave"
 	"/var/db/repos/gentoo,rbind"
-	"/var/cache/binpkgs,rbind"
-	"/var/cache/distfiles,rbind"
 	"/tmp,rbind"
 	"/var/tmp,rbind"
 	"/var/tmp/portage,type=tmpfs"
+	"/run,rbind"
+	"run,make-rslave"
 	)
 
 
@@ -99,8 +99,7 @@ file_copy=(
 #arbitrary custom commands to run before chrooting
 #there is no safety net!
 custcommands=(
-	"mkdir -p ${chrootdir}/var/cache/ccache"
-	"mount -t f2fs -o loop /home/foo/img_gentoo_ccache.raw	${chrootdir}/var/cache/ccache"
+	"mount -o rbind /mnt/data/portage/distfiles/ ${chrootdir}/var/cache/distfiles"
 	)
 
 #write a message, ${!1} allows us to pass variable names
